@@ -1,3 +1,5 @@
+.PHONY: clean
+
 OBJS = sobel.o main.o
 CFLAGS = -c -g -Wall
 
@@ -10,6 +12,5 @@ main: $(OBJS)
 %.o : %.cpp
 	g++ $(CFLAGS) $^
 
-.PHONY: clean
 clean:
-	rm -rf $(OBJS)
+	rm -f *.o *~
