@@ -1,6 +1,6 @@
 .PHONY: clean
 
-OBJS = sobel.o main.o
+OBJS = main.o sobel.o readAndWrite.o
 CFLAGS = -c -g -Wall
 
 main: $(OBJS)

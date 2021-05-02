@@ -9,6 +9,7 @@
 #include <unistd.h> /* getopt() */
 
 #include "sobel.h"
+#include "readAndWrite.h"
 
 using namespace std;
 
@@ -36,25 +37,29 @@ int main(int argc, char **argv)
     // bool isBinaryFile;
     bool is_output_timing;
     
-    // char *filename;    
+    char *inputFilename;    
+    char *outputFilename;    
     // float threshold;
     double timing, startTime, endTime;
-    int numLoops;
+    // int numLoops;
 
     /* some default values */
     // threshold = 0.001;
-    numLoops = 0;
+    // numLoops = 0;
     // isBinaryFile = 0;
     is_output_timing = true;
-    // filename = NULL;
+    inputFilename = NULL;
+    outputFilename = NULL;
 
-    while ((opt = getopt(argc, argv, "p:i:n:t:abdo")) != EOF)
+    while ((opt = getopt(argc, argv, "o:i:n:t")) != EOF)
     {
         switch (opt)
         {
         case 'i':
-            // filename = optarg;
-            cout << "option i=" << optarg << '\n';
+            inputFilename = optarg;            
+            break;
+        case 'o':
+            outputFilename = optarg;
             break;
         case 'b':
             // isBinaryFile = 1;
@@ -63,10 +68,7 @@ int main(int argc, char **argv)
             // threshold = atof(optarg);
             break;
         case 'n':
-            numLoops = atoi(optarg);
-            break;
-        case 'o':
-            is_output_timing = true;
+            // numLoops = atoi(optarg);
             break;
         case '?': //usage(argv[0], threshold);
             break;
@@ -75,13 +77,30 @@ int main(int argc, char **argv)
         }
     }
 
+    if (!inputFilename || !outputFilename)
+    {
+        if (!inputFilename) cout<<"Please input filename to read using: -i filename.jpg"<<endl;
+        if (!outputFilename) cout<<"Please input filename to write using: -o filename.jpg"<<endl;
+        return 1;
+    }
+
+    int width, height, channels;
+    unsigned char *image;
+    image = readImage(inputFilename, &width, &height, &channels, image);
+    
     if (is_output_timing) startTime = wtime();
-    sobel(numLoops);
+    
+    sobel(width, height, channels, image);
+    
     if (is_output_timing) 
     {
         endTime = wtime();
         timing = endTime - startTime;
     }
+
+    writeImage(outputFilename, width, height, channels, image);
+    closeImage(image);
+
     cout.precision(7);
     cout<<"--------------------------------------------\n";
     cout<<"||Sobel computation timing: "<< timing <<" sec||\n";

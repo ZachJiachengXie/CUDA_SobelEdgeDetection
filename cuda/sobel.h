@@ -4,8 +4,8 @@
 
 /**
  * @brief Here should be the brief
- * @param n testing loop number
+ * @param width testing loop number
  */
-  void sobel(int n);  
+void sobel(int width, int height, int channels, unsigned char *image); 
 
 #endif
