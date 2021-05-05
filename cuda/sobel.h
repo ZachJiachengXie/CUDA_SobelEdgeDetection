@@ -8,4 +8,7 @@
  */
 void sobel(int width, int height, int channels, unsigned char *image); 
 
+void sobel_optimized(int width, int height, int channels, unsigned char *image);
+
+
 #endif

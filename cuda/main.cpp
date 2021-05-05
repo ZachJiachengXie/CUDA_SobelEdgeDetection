@@ -36,6 +36,8 @@ int main(int argc, char **argv)
     // extern int optind;
     // bool isBinaryFile;
     bool is_output_timing;
+    bool use_cuda_optimized_code;
+    use_cuda_optimized_code = false;
     
     char *inputFilename;    
     char *outputFilename;    
@@ -53,7 +55,7 @@ int main(int argc, char **argv)
     inputFilename = NULL;
     outputFilename = NULL;
 
-    while ((opt = getopt(argc, argv, "o:i:n:t")) != EOF)
+    while ((opt = getopt(argc, argv, "co:i:n:t:")) != EOF)
     {
         switch (opt)
         {
@@ -65,6 +67,8 @@ int main(int argc, char **argv)
             break;
         case 'b':
             // isBinaryFile = 1;
+        case 'c':
+            use_cuda_optimized_code = true;
             break;
         case 't':
             // threshold = atof(optarg);
@@ -91,7 +95,11 @@ int main(int argc, char **argv)
     
     if (is_output_timing) startTime = wtime();
     
-    sobel(width, height, channels, image);
+    if (use_cuda_optimized_code) {
+        sobel_optimized(width, height, channels, image);
+    } else {
+        sobel(width, height, channels, image);
+    }
     
     if (is_output_timing) 
     {
