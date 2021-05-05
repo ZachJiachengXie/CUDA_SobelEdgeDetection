@@ -53,7 +53,7 @@ int main(int argc, char **argv)
     inputFilename = NULL;
     outputFilename = NULL;
 
-    while ((opt = getopt(argc, argv, "o:i:n:t:w:h")) != EOF)
+    while ((opt = getopt(argc, argv, "o:i:n:t")) != EOF)
     {
         switch (opt)
         {
@@ -71,10 +71,6 @@ int main(int argc, char **argv)
             break;
         case 'n':
             // numLoops = atoi(optarg);
-        case 'w':
-            width = atoi(optarg);
-        case 'h':
-            height = atoi(optarg);
             break;
         case '?': //usage(argv[0], threshold);
             break;

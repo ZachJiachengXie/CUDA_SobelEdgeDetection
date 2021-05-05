@@ -19,7 +19,7 @@ void horizontalKernel(int width, int height, unsigned char *horizontalKernelImag
             if (curr > MAX_STRENGTH)
                 MAX_STRENGTH = curr;
             if (curr < min_STRENGTH)
-                min_STRENGTH = curr;
+                MIN_STRENGTH = curr;
         }
     }
 
@@ -36,7 +36,7 @@ void verticalKernel(int width, int height, unsigned char *verticalKernelImage, u
             if (curr > MAX_STRENGTH)
                 MAX_STRENGTH = curr;
             if (curr < min_STRENGTH)
-                min_STRENGTH = curr;
+                MIN_STRENGTH = curr;
         }
     }
 }  
@@ -52,12 +52,12 @@ void edgeDiffKernel(int width, int height, unsigned char *verticalKernelImage, u
             if (temp[i][j] > MAX_STRENGTH)
                 MAX_STRENGTH = temp[i][j];
             if (temp[i][j] < min_STRENGTH)
-                min_STRENGTH = temp[i][j];
+                MIN_STRENGTH = temp[i][j];
         }
     }
 
     // Normalized Delta
-    int diff = MAX_STRENGTH - MAX_STRENGTH;
+    int diff = MAX_STRENGTH - MIN_STRENGTH;
 
     for (int i = 0; i < height; i++)
     {
