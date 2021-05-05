@@ -41,6 +41,8 @@ int main(int argc, char **argv)
     char *outputFilename;    
     // float threshold;
     double timing, startTime, endTime;
+    int width, height, channels;
+    channels = 3;
     // int numLoops;
 
     /* some default values */
@@ -51,7 +53,7 @@ int main(int argc, char **argv)
     inputFilename = NULL;
     outputFilename = NULL;
 
-    while ((opt = getopt(argc, argv, "o:i:n:t")) != EOF)
+    while ((opt = getopt(argc, argv, "o:i:n:t:w:h")) != EOF)
     {
         switch (opt)
         {
@@ -69,6 +71,10 @@ int main(int argc, char **argv)
             break;
         case 'n':
             // numLoops = atoi(optarg);
+        case 'w':
+            width = atoi(optarg);
+        case 'h':
+            height = atoi(optarg);
             break;
         case '?': //usage(argv[0], threshold);
             break;
@@ -84,7 +90,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    int width, height, channels;
     unsigned char *image;
     image = readImage(inputFilename, &width, &height, &channels, image);
     
