@@ -55,27 +55,30 @@ __global__ void sobel_gpu(const byte* orig, byte* cpu, const unsigned int width,
 
 
 __global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int width, const unsigned int height) {
-    int x = threadIdx.x;
-    int y = blockIdx.x;
-    __shared__ byte cache[3][width];
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y; // y should always equal to blockIdx.y, since blockDim.y == 1, threadIdx.y == 1
+    int tidx = threadIdx.x;
+    __shared__ byte cache[3][blockDim.x];
 
     if(y > 0 && y < height-1) 
     {
-        cache[0][x] = orig[(y-1)*width + x];
-        cache[1][x] = orig[y*width + x];
-        cache[2][x] = orig[(y+1)*width + x];
+        cache[0][tidx] = orig[(y-1)*width + x];
+        cache[1][tidx] = orig[y*width + x];
+        cache[2][tidx] = orig[(y+1)*width + x];
     }
     __syncthreads();
 
     float dx, dy;
     if( x > 0 && y > 0 && x < width-1 && y < height-1) {
-        dx = (-1* cache[y-1][x-1]) + (-2*cache[y][x-1]) + (-1*cache[y+1][x-1]) +
-             (    cache[y-1][x+1]) + ( 2*cache[y][x+1]) + (   cache[y+1][x+1]);
-        dy = (    cache[y-1][x-1]) + ( 2*cache[y-1][x]) + (   cache[y-1][x+1]) +
-             (-1* cache[y+1][x-1]) + (-2*cache[y+1][x]) + (-1*cache[y+1][x+1]);
+        dx = (-1* cache[y-1][tidx-1]) + (-2*cache[y][tidx-1]) + (-1*cache[y+1][tidx-1]) +
+             (    cache[y-1][tidx+1]) + ( 2*cache[y][tidx+1]) + (   cache[y+1][tidx+1]);
+        dy = (    cache[y-1][tidx-1]) + ( 2*cache[y-1][tidx]) + (   cache[y-1][tidx+1]) +
+             (-1* cache[y+1][tidx-1]) + (-2*cache[y+1][tidx]) + (-1*cache[y+1][tidx+1]);
         cpu[y*width + x] = sqrt( (dx*dx) + (dy*dy) );
     }
 }
+
+
 
 /************************************************************************************************
  * int main(int, char*[])
@@ -137,6 +140,7 @@ int main(int argc, char*argv[]) {
     imgData cpuImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     imgData ompImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     imgData gpuImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
+    imgData gpuImg_optimized(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     
     /** make sure all our newly allocated data is set to 0 **/
     memset(cpuImg.pixels, 0, (origImg.width*origImg.height));
@@ -162,11 +166,8 @@ int main(int argc, char*argv[]) {
     cudaMemset(gpu_sobel, 0, (origImg.width*origImg.height));
    
     /** set up the dim3's for the gpu to use as arguments (threads per block & num of blocks)**/
-    // dim3 threadsPerBlock(GRIDVAL, GRIDVAL, 1);
-    // dim3 numBlocks(ceil(origImg.width/GRIDVAL), ceil(origImg.height/GRIDVAL), 1);
-    // dim3 threadsPerBlock(min(256,origImg.width));
-    dim3 threadsPerBlock(origImg.width);
-    dim3 numBlocks(origImg.height);
+    dim3 threadsPerBlock(GRIDVAL, GRIDVAL, 1);
+    dim3 numBlocks(ceil(origImg.width/GRIDVAL), ceil(origImg.height/GRIDVAL), 1);
 
     /** Run the sobel filter using the CPU **/
     c = std::chrono::system_clock::now();
@@ -176,22 +177,29 @@ int main(int argc, char*argv[]) {
     std::chrono::duration<double> time_gpu = std::chrono::system_clock::now() - c;
     /** Copy data back to CPU from GPU **/
     cudaMemcpy(gpuImg.pixels, gpu_sobel, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
+    /** Free any memory leftover.. gpuImig, cpuImg, and ompImg get their pixels free'd while writing **/
+    cudaFree(gpu_orig); cudaFree(gpu_sobel);
 
 
-    /** ------------------- SHARED OPTIMIZATION  **/
+    /** ------------------- SHARED OPTIMIZATION  ---------- **/
     byte *gpu_src, *gpu_result;
     cudaMalloc( (void**)&gpu_src, (origImg.width * origImg.height));
     cudaMalloc( (void**)&gpu_result, (origImg.width * origImg.height));
     /** Transfer over the memory from host to device and memset the sobel array to 0s **/
     cudaMemcpy(gpu_src, origImg.pixels, (origImg.width*origImg.height), cudaMemcpyHostToDevice);
     cudaMemset(gpu_result, 0, (origImg.width*origImg.height));
+
+    dim3 threadsPerBlock_Shared(min(256,origImg.width));
+    dim3 numBlocks_Shared(ceil((origImg.width*1.0)/256.0), origImg.height);
+
     /** Run the optimized sobel filter using the CPU **/
     c = std::chrono::system_clock::now();
-    sobel_gpu_shared<<<numBlocks, threadsPerBlock>>>(gpu_src, gpu_result, origImg.width, origImg.height);
+    sobel_gpu_shared<<<numBlocks_Shared, threadsPerBlock_Shared>>>(gpu_src, gpu_result, origImg.width, origImg.height, GRIDVAL);
     cudaError_t cudaerror = cudaDeviceSynchronize(); // waits for completion, returns error code
     if ( cudaerror != cudaSuccess ) fprintf( stderr, "Cuda failed to synchronize: %s\n", cudaGetErrorName( cudaerror ) ); // if error, output error
     std::chrono::duration<double> time_gpu_shared = std::chrono::system_clock::now() - c;
-    cudaMemcpy(gpuImg.pixels, gpu_result, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
+
+    cudaMemcpy(gpuImg_optimized.pixels, gpu_result, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
 
 
     /** Output runtimes of each method of sobel filtering **/
@@ -208,11 +216,12 @@ int main(int argc, char*argv[]) {
 
     /** Output the images of each sobel filter with an appropriate string appended to the original image name **/
     writeImage(argv[1], "gpu", gpuImg);
+    writeImage(argv[1], "gpu_optimized", gpuImg_optimized);
     writeImage(argv[1], "cpu", cpuImg);
     writeImage(argv[1], "omp", ompImg);
 
     /** Free any memory leftover.. gpuImig, cpuImg, and ompImg get their pixels free'd while writing **/
-    cudaFree(gpu_orig); cudaFree(gpu_sobel);
+    cudaFree(gpu_src); cudaFree(gpu_result);
     return 0;
 }
 
