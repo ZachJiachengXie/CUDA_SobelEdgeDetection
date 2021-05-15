@@ -61,7 +61,7 @@ __global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int
     int tidx = threadIdx.x;
     __shared__ byte cache[3][THREADSNUM];
 
-    if(y > 0 && y < height-1 && x < width + 1) 
+    if(y > 0 && y < height-1 && x < width) 
     {
         cache[0][tidx] = orig[(y-1)*width + x];
         cache[1][tidx] = orig[y*width + x];
@@ -71,14 +71,33 @@ __global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int
 
     float dx, dy;
     
-    if( x > 0 && y > 0 && x < width-1 && y < height-1) {
+    if( tidx > 0 && y > 0 && tidx < blockDim.x-1 && y < height-1) {
         dx = (-1* cache[0][tidx-1]) + (-2*cache[1][tidx-1]) + (-1*cache[2][tidx-1]) +
              (    cache[0][tidx+1]) + ( 2*cache[1][tidx+1]) + (   cache[2][tidx+1]);
         dy = (    cache[0][tidx-1]) + ( 2*cache[0][tidx]) + (   cache[0][tidx+1]) +
              (-1* cache[2][tidx-1]) + (-2*cache[2][tidx]) + (-1*cache[2][tidx+1]);
         cpu[y*width + x] = sqrt( (dx*dx) + (dy*dy) );
     }
-    
+
+    /** Edge case 1: cell is on the left-most edge of the block, but not the left-most edge of the matrix **/
+    if (tidx == 0 && x > 0) {
+        dx = (-1* orig[(y-1)*width + (x-1)]) + (-2*orig[y*width+(x-1)]) + (-1*orig[(y+1)*width+(x-1)]) +
+             (    cache[0][tidx+1]) + ( 2*cache[1][tidx+1]) + (   cache[2][tidx+1]);
+        dy = (    orig[(y-1)*width + (x-1)]) + ( 2*cache[0][tidx]) + (   cache[0][tidx+1]) +
+             (-1* orig[(y+1)*width + (x-1)]) + (-2*cache[2][tidx]) + (-1*cache[2][tidx+1]);
+        cpu[y*width + x] = sqrt( (dx*dx) + (dy*dy) );
+    }
+
+    /** Edge case 1: cell is on the right-most edge of the block, but not the right-most edge of the matrix **/
+    if (tidx == blockdim.x-1 && x < width-1)
+    {        
+        dx = (-1* cache[0][tidx-1]) + (-2*cache[1][tidx-1]) + (-1*cache[2][tidx-1]) +
+             (    orig[(y-1)*width + (x+1)]) + ( 2*orig[y*width+(x+1)]) + (   orig[(y+1)*width+(x+1)]);
+        dy = (    cache[0][tidx-1]) + ( 2*cache[0][tidx]) + (   orig[(y-1)*width+(x+1)]) +
+             (-1* cache[2][tidx-1]) + (-2*cache[2][tidx]) + (-1*orig[(y+1)*width+(x+1)]);
+        cpu[y*width + x] = sqrt( (dx*dx) + (dy*dy) );
+
+    }
     // if( x > 0 && y > 0 && x < width-1 && y < height-1) {
     //     dx = (-1* orig[(y-1)*width + (x-1)]) + (-2*orig[y*width+(x-1)]) + (-1*orig[(y+1)*width+(x-1)]) +
     //          (    orig[(y-1)*width + (x+1)]) + ( 2*orig[y*width+(x+1)]) + (   orig[(y+1)*width+(x+1)]);
