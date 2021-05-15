@@ -53,6 +53,30 @@ __global__ void sobel_gpu(const byte* orig, byte* cpu, const unsigned int width,
     }
 }
 
+
+__global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int width, const unsigned int height) {
+    int x = threadIdx.x;
+    int y = blockIdx.x;
+    __shared__ byte cache[3][width];
+
+    if(y > 0 && y < height-1) 
+    {
+        cache[0][x] = orig[(y-1)*width + x];
+        cache[1][x] = orig[y*width + x];
+        cache[2][x] = orig[(y+1)*width + x];
+    }
+    __syncthreads();
+
+    float dx, dy;
+    if( x > 0 && y > 0 && x < width-1 && y < height-1) {
+        dx = (-1* cache[y-1][x-1]) + (-2*cache[y][x-1]) + (-1*cache[y+1][x-1]) +
+             (    cache[y-1][x+1]) + ( 2*cache[y][x+1]) + (   cache[y+1][x+1]);
+        dy = (    cache[y-1][x-1]) + ( 2*cache[y-1][x]) + (   cache[y-1][x+1]) +
+             (-1* cache[y+1][x-1]) + (-2*cache[y+1][x]) + (-1*cache[y+1][x+1]);
+        cpu[y*width + x] = sqrt( (dx*dx) + (dy*dy) );
+    }
+}
+
 /************************************************************************************************
  * int main(int, char*[])
  * - This function is our program's entry point. The function passes in the command line arguments
@@ -138,8 +162,11 @@ int main(int argc, char*argv[]) {
     cudaMemset(gpu_sobel, 0, (origImg.width*origImg.height));
    
     /** set up the dim3's for the gpu to use as arguments (threads per block & num of blocks)**/
-    dim3 threadsPerBlock(GRIDVAL, GRIDVAL, 1);
-    dim3 numBlocks(ceil(origImg.width/GRIDVAL), ceil(origImg.height/GRIDVAL), 1);
+    // dim3 threadsPerBlock(GRIDVAL, GRIDVAL, 1);
+    // dim3 numBlocks(ceil(origImg.width/GRIDVAL), ceil(origImg.height/GRIDVAL), 1);
+    // dim3 threadsPerBlock(min(256,origImg.width));
+    dim3 threadsPerBlock(origImg.width);
+    dim3 numBlocks(origImg.height);
 
     /** Run the sobel filter using the CPU **/
     c = std::chrono::system_clock::now();
