@@ -22,6 +22,7 @@
 #include "imageLoader.cpp"
 
 #define GRIDVAL 20.0 
+#define THREADSNUM 256
 
 void sobel_cpu(const byte* orig, byte* cpu, const unsigned int width, const unsigned int height);
 void sobel_omp(const byte* orig, byte* cpu, const unsigned int width, const unsigned int height);
@@ -58,9 +59,9 @@ __global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y; // y should always equal to blockIdx.y, since blockDim.y == 1, threadIdx.y == 1
     int tidx = threadIdx.x;
-    __shared__ byte cache[3][blockDim.x];
+    __shared__ byte cache[3][THREADSNUM];
 
-    if(y > 0 && y < height-1) 
+    if(y > 0 && y < height-1 && x < width + 1) 
     {
         cache[0][tidx] = orig[(y-1)*width + x];
         cache[1][tidx] = orig[y*width + x];
@@ -189,14 +190,15 @@ int main(int argc, char*argv[]) {
     cudaMemcpy(gpu_src, origImg.pixels, (origImg.width*origImg.height), cudaMemcpyHostToDevice);
     cudaMemset(gpu_result, 0, (origImg.width*origImg.height));
 
-    dim3 threadsPerBlock_Shared(min(256,origImg.width));
-    dim3 numBlocks_Shared(ceil((origImg.width*1.0)/256.0), origImg.height);
+
+    dim3 threadsPerBlock_Shared(THREADSNUM);
+    dim3 numBlocks_Shared(ceil((origImg.width*1.0)/THREADSNUM), origImg.height);
 
     /** Run the optimized sobel filter using the CPU **/
     c = std::chrono::system_clock::now();
-    sobel_gpu_shared<<<numBlocks_Shared, threadsPerBlock_Shared>>>(gpu_src, gpu_result, origImg.width, origImg.height, GRIDVAL);
-    cudaError_t cudaerror = cudaDeviceSynchronize(); // waits for completion, returns error code
-    if ( cudaerror != cudaSuccess ) fprintf( stderr, "Cuda failed to synchronize: %s\n", cudaGetErrorName( cudaerror ) ); // if error, output error
+    sobel_gpu_shared<<<numBlocks_Shared, threadsPerBlock_Shared>>>(gpu_src, gpu_result, origImg.width, origImg.height);
+    cudaError_t cudaerror_shared = cudaDeviceSynchronize(); // waits for completion, returns error code
+    if ( cudaerror_shared != cudaSuccess ) fprintf( stderr, "Cuda failed to synchronize: %s\n", cudaGetErrorName( cudaerror_shared ) ); // if error, output error
     std::chrono::duration<double> time_gpu_shared = std::chrono::system_clock::now() - c;
 
     cudaMemcpy(gpuImg_optimized.pixels, gpu_result, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
