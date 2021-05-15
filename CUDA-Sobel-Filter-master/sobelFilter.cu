@@ -89,7 +89,7 @@ __global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int
     }
 
     /** Edge case 1: cell is on the right-most edge of the block, but not the right-most edge of the matrix **/
-    if (tidx == blockdim.x-1 && x < width-1)
+    if (tidx == blockDim.x-1 && x < width-1)
     {        
         dx = (-1* cache[0][tidx-1]) + (-2*cache[1][tidx-1]) + (-1*cache[2][tidx-1]) +
              (    orig[(y-1)*width + (x+1)]) + ( 2*orig[y*width+(x+1)]) + (   orig[(y+1)*width+(x+1)]);
