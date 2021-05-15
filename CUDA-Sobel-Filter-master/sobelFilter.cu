@@ -177,14 +177,33 @@ int main(int argc, char*argv[]) {
     /** Copy data back to CPU from GPU **/
     cudaMemcpy(gpuImg.pixels, gpu_sobel, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
 
+
+    /** ------------------- SHARED OPTIMIZATION  **/
+    byte *gpu_src, *gpu_result;
+    cudaMalloc( (void**)&gpu_src, (origImg.width * origImg.height));
+    cudaMalloc( (void**)&gpu_result, (origImg.width * origImg.height));
+    /** Transfer over the memory from host to device and memset the sobel array to 0s **/
+    cudaMemcpy(gpu_src, origImg.pixels, (origImg.width*origImg.height), cudaMemcpyHostToDevice);
+    cudaMemset(gpu_result, 0, (origImg.width*origImg.height));
+    /** Run the optimized sobel filter using the CPU **/
+    c = std::chrono::system_clock::now();
+    sobel_gpu_shared<<<numBlocks, threadsPerBlock>>>(gpu_src, gpu_result, origImg.width, origImg.height);
+    cudaError_t cudaerror = cudaDeviceSynchronize(); // waits for completion, returns error code
+    if ( cudaerror != cudaSuccess ) fprintf( stderr, "Cuda failed to synchronize: %s\n", cudaGetErrorName( cudaerror ) ); // if error, output error
+    std::chrono::duration<double> time_gpu_shared = std::chrono::system_clock::now() - c;
+    cudaMemcpy(gpuImg.pixels, gpu_result, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
+
+
     /** Output runtimes of each method of sobel filtering **/
     printf("\nProcessing %s: %d rows x %d columns\n", argv[1], origImg.height, origImg.width);
     printf("CPU execution time    = %*.1f msec\n", 5, 1000*time_cpu.count());
     printf("OpenMP execution time = %*.1f msec\n", 5, 1000*time_omp.count());
     printf("CUDA execution time   = %*.1f msec\n", 5, 1000*time_gpu.count());
+    printf("Optimized CUDA execution time   = %*.1f msec\n", 5, 1000*time_gpu_shared.count());
     printf("\nCPU->OMP speedup:%*.1f X", 12, (1000*time_cpu.count())/(1000*time_omp.count()));
     printf("\nOMP->GPU speedup:%*.1f X", 12, (1000*time_omp.count())/(1000*time_gpu.count()));
     printf("\nCPU->GPU speedup:%*.1f X", 12, (1000*time_cpu.count())/(1000*time_gpu.count()));
+    printf("\nCPU->GPU_Opt speedup:%*.1f X", 12, (1000*time_cpu.count())/(1000*time_gpu_shared.count()));
     printf("\n");
 
     /** Output the images of each sobel filter with an appropriate string appended to the original image name **/
