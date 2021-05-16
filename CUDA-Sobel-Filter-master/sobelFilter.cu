@@ -53,7 +53,97 @@ __global__ void sobel_gpu(const byte* orig, byte* cpu, const unsigned int width,
     }
 }
 
+/*************************************
+* GPU with Sharpened Image
+*************************************/
+__global__ void sobel_gpu_separated(const byte* orig, byte* cpu,
+                                 const unsigned int width, 
+                                 const unsigned int height,
+                                 int* max_min
+                                ) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int x = tx + blockIdx.x * blockDim.x;
+    int y = ty + blockIdx.y * blockDim.y;
 
+    // __shared__ int max;
+    // __shared__ int min;
+    
+    // max = -200;
+    // min = 2000;
+    // __syncthreads();
+    
+    int img2dhororg;
+    int img2dverorg;
+    int img2dmag;
+
+    if (x > 0 && x < width - 1 && y > 0 && y < height - 1) {
+        ///horizontal
+        int curr = (-1* orig[(y-1)*width + (x-1)]) + (-2*orig[y*width+(x-1)]) + (-1*orig[(y+1)*width+(x-1)]) +
+        (    orig[(y-1)*width + (x+1)]) + ( 2*orig[y*width+(x+1)]) + (   orig[(y+1)*width+(x+1)]);
+        img2dhororg = curr;
+        if (curr > max_min[0])
+        max_min[0] = curr;
+        if (curr < max_min[1])
+        max_min[1] = curr;
+        // __syncthreads();
+        
+
+        ///vertical:
+        max_min[0] = -200;
+        max_min[1] = 2000;
+        curr = (    orig[(y-1)*width + (x-1)]) + ( 2*orig[(y-1)*width+x]) + (   orig[(y-1)*width+(x+1)]) +
+        (-1* orig[(y+1)*width + (x-1)]) + (-2*orig[(y+1)*width+x]) + (-1*orig[(y+1)*width+(x+1)]);
+        img2dverorg = curr;
+        if (curr > max_min[0])
+        max_min[0] = curr;
+        if (curr < max_min[1])
+        max_min[1] = curr;
+        // __syncthreads();
+        
+
+        ///magnitude
+        max_min[0] = -200;
+        max_min[1] = 2000;
+        
+        float tmp = (img2dhororg * img2dhororg) + (img2dverorg * img2dverorg);
+        img2dmag = sqrt(tmp);
+        if (img2dmag > max_min[0])
+        max_min[0] = img2dmag;
+        if (img2dmag < max_min[1])
+        max_min[1] = img2dmag;
+        // __syncthreads();
+
+        
+        cpu[y*width + x] = img2dmag;
+    } 
+    
+}
+
+__global__ void sobel_gpu_cal(
+                                byte* cpu, 
+                                const unsigned int width, 
+                                const unsigned int height,
+                                int* max_min) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int x = tx + blockIdx.x * blockDim.x;
+    int y = ty + blockIdx.y * blockDim.y;
+
+    
+    int img2dmag = cpu[y*width + x];
+
+    if (x > 0 && x < width - 1 && y > 0 && y < height - 1) {
+        int diff = max_min[0] - max_min[1];
+        float abc = (img2dmag - max_min[1]) / (diff * 1.0);
+        img2dmag = abc * 255;
+        cpu[y*width + x] = img2dmag;
+    }                                
+}
+
+/*************************************
+* GPU with Shared Memory
+*************************************/
 __global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int width, const unsigned int height) {
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;    
@@ -158,7 +248,8 @@ int main(int argc, char*argv[]) {
     imgData cpuImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     imgData ompImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     imgData gpuImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
-    imgData shgImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
+    imgData shmImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
+    imgData shiImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     
     /** make sure all our newly allocated data is set to 0 **/
     memset(cpuImg.pixels, 0, (origImg.width*origImg.height));
@@ -199,8 +290,7 @@ int main(int argc, char*argv[]) {
     /** Copy data back to CPU from GPU **/
     cudaMemcpy(gpuImg.pixels, gpu_sobel, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
 
-
-    /** ------------------- SHARED OPTIMIZATION  **/
+    /** CUDA with Shared Memory **/
     byte *gpu_src, *gpu_result;
     cudaMalloc( (void**)&gpu_src, (origImg.width * origImg.height));
     cudaMalloc( (void**)&gpu_result, (origImg.width * origImg.height));
@@ -217,24 +307,51 @@ int main(int argc, char*argv[]) {
     cudaError_t cudaerror2 = cudaDeviceSynchronize(); // waits for completion, returns error code
     if ( cudaerror2 != cudaSuccess ) fprintf( stderr, "Cuda failed to synchronize: %s\n", cudaGetErrorName( cudaerror ) ); // if error, output error
     std::chrono::duration<double> time_gpu_shared = std::chrono::system_clock::now() - c;
-    cudaMemcpy(shgImg.pixels, gpu_result, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
+    cudaMemcpy(shmImg.pixels, gpu_result, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
+
+    /** CUDA with Sharpened Images **/
+    byte *gpu_src2, *gpu_result2;
+    cudaMalloc( (void**)&gpu_src2, (origImg.width * origImg.height));
+    cudaMalloc( (void**)&gpu_result2, (origImg.width * origImg.height));
+    /** Transfer over the memory from host to device and memset the sobel array to 0s **/
+    cudaMemcpy(gpu_src2, origImg.pixels, (origImg.width*origImg.height), cudaMemcpyHostToDevice);
+    cudaMemset(gpu_result2, 0, (origImg.width*origImg.height));
+    /** set up the dim3's for the gpu to use as arguments (threads per block & num of blocks)**/
+    // dim3 dimBlock(GRIDVAL, GRIDVAL, 1);
+    // dim3 dimGrid(ceil(origImg.width/GRIDVAL), ceil(origImg.height/GRIDVAL), 1);
+
+    int tmp[2] = {-200, 2000};
+    int *gpu_tmp;
+    cudaMalloc( (void**)&gpu_tmp, (2* sizeof(gpu_tmp)));
+    cudaMemcpy(gpu_tmp, tmp, (2* sizeof(gpu_tmp)), cudaMemcpyHostToDevice);
+    /** Run the optimized sobel filter using the CPU **/
+    c = std::chrono::system_clock::now();
+    sobel_gpu_separated<<<dimGrid, dimBlock>>>(gpu_src2, gpu_result2, origImg.width, origImg.height, gpu_tmp);
+    sobel_gpu_cal<<<dimGrid, dimBlock>>>(gpu_result2, origImg.width, origImg.height, gpu_tmp);
+    cudaerror2 = cudaDeviceSynchronize(); // waits for completion, returns error code
+    if ( cudaerror2 != cudaSuccess ) fprintf( stderr, "Cuda failed to synchronize: %s\n", cudaGetErrorName( cudaerror ) ); // if error, output error
+    std::chrono::duration<double> time_gpu_sharpened = std::chrono::system_clock::now() - c;
+    cudaMemcpy(shiImg.pixels, gpu_result2, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
 
 
     /** Output runtimes of each method of sobel filtering **/
     printf("\nProcessing %s: %d rows x %d columns\n", argv[1], origImg.height, origImg.width);
-    printf("CPU execution time    = %*.5f msec\n", 5, 1000*time_cpu.count());
-    printf("OpenMP execution time = %*.5f msec\n", 5, 1000*time_omp.count());
-    printf("CUDA execution time   = %*.5f msec\n", 5, 1000*time_gpu.count());
-    printf("Optimized CUDA execution time   = %*.5f msec\n", 5, 1000*time_gpu_shared.count());
-    printf("\nCPU->OMP speedup:%*.1f X", 12, (1000*time_cpu.count())/(1000*time_omp.count()));
-    printf("\nOMP->GPU speedup:%*.1f X", 12, (1000*time_omp.count())/(1000*time_gpu.count()));
-    printf("\nCPU->GPU speedup:%*.1f X", 12, (1000*time_cpu.count())/(1000*time_gpu.count()));
-    printf("\nCPU->GPU_Opt speedup:%*.1f X", 12, (1000*time_cpu.count())/(1000*time_gpu_shared.count()));
+    printf("CPU execution time        = %*.5f msec\n", 5, 1000*time_cpu.count());
+    printf("OpenMP execution time     = %*.5f msec\n", 5, 1000*time_omp.count());
+    printf("CUDA execution time       = %*.5f msec\n", 5, 1000*time_gpu.count());
+    printf("CUDA with shared memory   = %*.5f msec\n", 5, 1000*time_gpu_shared.count());
+    printf("CUDA with sharpened image = %*.5f msec\n", 5, 1000*time_gpu_sharpened.count());
+    printf("\nCPU->OMP speedup:          %*.1f X", 12, (1000*time_cpu.count())/(1000*time_omp.count()));
+    printf("\nOMP->GPU speedup:          %*.1f X", 12, (1000*time_omp.count())/(1000*time_gpu.count()));
+    printf("\nCPU->GPU speedup:          %*.1f X", 12, (1000*time_cpu.count())/(1000*time_gpu.count()));
+    printf("\nCPU->GPU with SM speedup:  %*.1f X", 12, (1000*time_cpu.count())/(1000*time_gpu_shared.count()));
+    printf("\nCPU->GPU with SI speedup:  %*.1f X", 12, (1000*time_cpu.count())/(1000*time_gpu_sharpened.count()));
     printf("\n");
 
     /** Output the images of each sobel filter with an appropriate string appended to the original image name **/
     writeImage(argv[1], "gpu", gpuImg);
-    writeImage(argv[1], "shg", shgImg);
+    writeImage(argv[1], "shm", shmImg);
+    writeImage(argv[1], "shi", shiImg);
     // writeImage(argv[1], "cpu", cpuImg);
     // writeImage(argv[1], "omp", ompImg);
 
