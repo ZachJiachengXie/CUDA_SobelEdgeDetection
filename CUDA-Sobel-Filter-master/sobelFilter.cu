@@ -21,7 +21,7 @@
 #include <math.h>
 #include "imageLoader.cpp"
 
-#define GRIDVAL 20.0 
+#define GRIDVAL 32
 
 void sobel_cpu(const byte* orig, byte* cpu, const unsigned int width, const unsigned int height);
 void sobel_omp(const byte* orig, byte* cpu, const unsigned int width, const unsigned int height);
@@ -55,24 +55,45 @@ __global__ void sobel_gpu(const byte* orig, byte* cpu, const unsigned int width,
 
 
 __global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int width, const unsigned int height) {
-    int x = threadIdx.x;
-    int y = blockIdx.x;
-    __shared__ byte cache[3][width];
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;    
 
-    if(y > 0 && y < height-1) 
-    {
-        cache[0][x] = orig[(y-1)*width + x];
-        cache[1][x] = orig[y*width + x];
-        cache[2][x] = orig[(y+1)*width + x];
+    __shared__ byte shared_mem[GRIDVAL+2][GRIDVAL+2]; //tile to shared memory
+
+    if (threadIdx.x == 0) {
+        shared_mem[threadIdx.y+1][threadIdx.x] = ((y < height) && (x < width) && (x > 0)) ? orig[(y) * width + (x - 1)] : 0;
+        if (threadIdx.y == 0) {
+            shared_mem[threadIdx.y][threadIdx.x] = ((y < height) && (x < width) && (x > 0) && (y > 0)) ? orig[(y - 1) * width + (x - 1)] : 0;
+        }
     }
+    if (threadIdx.y == 0) {
+        shared_mem[threadIdx.y][threadIdx.x+1] = ((y < height) && (x < width) && (y > 0)) ? orig[(y - 1) * width + (x)] : 0;
+        if (threadIdx.x == (GRIDVAL - 1)) {
+            shared_mem[threadIdx.y + 1][threadIdx.x + 2] = ((y < height) && (x < width-1)) ? orig[(y) * width + (x+1)] : 0;
+        }
+    }
+    if (threadIdx.x == (GRIDVAL - 1)) {
+        shared_mem[threadIdx.y+1][threadIdx.x+2] = ((y < height) && (x < width-1)) ? orig[(y) * width + (x+1)] : 0;
+        if (threadIdx.y == (GRIDVAL - 1)) {
+            shared_mem[threadIdx.y + 2][threadIdx.x + 2] = ((y < height-1) && (x < width-1)) ? orig[(y+1) * width + (x+1)] : 0;
+        }
+    }
+    if (threadIdx.y == (GRIDVAL - 1)) {
+        shared_mem[threadIdx.y+2][threadIdx.x+1] = ((y < height-1) && (x < width)) ? orig[(y + 1) * width + (x)] : 0;
+        if (threadIdx.x == 0) {
+            shared_mem[threadIdx.y + 2][threadIdx.x] = ((y < height-1) && (x < width) && (x > 0) ) ? orig[(y+1) * width + (x-1)] : 0;
+        }
+    }
+    shared_mem[threadIdx.y+1][threadIdx.x+1] = ((y < height) && (x < width)) ? orig[(y) * width + (x)] : 0;
     __syncthreads();
 
     float dx, dy;
+    // y-1 == threadId.y; y == threadIdx.y+1
     if( x > 0 && y > 0 && x < width-1 && y < height-1) {
-        dx = (-1* cache[y-1][x-1]) + (-2*cache[y][x-1]) + (-1*cache[y+1][x-1]) +
-             (    cache[y-1][x+1]) + ( 2*cache[y][x+1]) + (   cache[y+1][x+1]);
-        dy = (    cache[y-1][x-1]) + ( 2*cache[y-1][x]) + (   cache[y-1][x+1]) +
-             (-1* cache[y+1][x-1]) + (-2*cache[y+1][x]) + (-1*cache[y+1][x+1]);
+        dx = (-1* shared_mem[threadIdx.y][threadIdx.x])   + (-2*shared_mem[threadIdx.y+1][threadIdx.x])   + (-1*shared_mem[threadIdx.y+2][threadIdx.x]) +
+             (    shared_mem[threadIdx.y][threadIdx.x+2]) + ( 2*shared_mem[threadIdx.y+1][threadIdx.x+2]) + (   shared_mem[threadIdx.y+2][threadIdx.x+2]);
+        dy = (    shared_mem[threadIdx.y][threadIdx.x])   + ( 2*shared_mem[threadIdx.y][threadIdx.x+1])   + (   shared_mem[threadIdx.y][threadIdx.x+2]) +
+             (-1* shared_mem[threadIdx.y+2][threadIdx.x]) + (-2*shared_mem[threadIdx.y+2][threadIdx.x+1]) + (-1*shared_mem[threadIdx.y+2][threadIdx.x+2]);
         cpu[y*width + x] = sqrt( (dx*dx) + (dy*dy) );
     }
 }
@@ -137,6 +158,7 @@ int main(int argc, char*argv[]) {
     imgData cpuImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     imgData ompImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     imgData gpuImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
+    imgData shgImg(new byte[origImg.width*origImg.height], origImg.width, origImg.height);
     
     /** make sure all our newly allocated data is set to 0 **/
     memset(cpuImg.pixels, 0, (origImg.width*origImg.height));
@@ -162,11 +184,11 @@ int main(int argc, char*argv[]) {
     cudaMemset(gpu_sobel, 0, (origImg.width*origImg.height));
    
     /** set up the dim3's for the gpu to use as arguments (threads per block & num of blocks)**/
-    // dim3 threadsPerBlock(GRIDVAL, GRIDVAL, 1);
-    // dim3 numBlocks(ceil(origImg.width/GRIDVAL), ceil(origImg.height/GRIDVAL), 1);
+    dim3 threadsPerBlock(GRIDVAL, GRIDVAL, 1);
+    dim3 numBlocks(ceil(origImg.width/GRIDVAL), ceil(origImg.height/GRIDVAL), 1);
     // dim3 threadsPerBlock(min(256,origImg.width));
-    dim3 threadsPerBlock(origImg.width);
-    dim3 numBlocks(origImg.height);
+    // dim3 threadsPerBlock(origImg.width);
+    // dim3 numBlocks(origImg.height);
 
     /** Run the sobel filter using the CPU **/
     c = std::chrono::system_clock::now();
@@ -185,21 +207,25 @@ int main(int argc, char*argv[]) {
     /** Transfer over the memory from host to device and memset the sobel array to 0s **/
     cudaMemcpy(gpu_src, origImg.pixels, (origImg.width*origImg.height), cudaMemcpyHostToDevice);
     cudaMemset(gpu_result, 0, (origImg.width*origImg.height));
+    /** set up the dim3's for the gpu to use as arguments (threads per block & num of blocks)**/
+    dim3 dimBlock(GRIDVAL, GRIDVAL, 1);
+    dim3 dimGrid(ceil(origImg.width/GRIDVAL), ceil(origImg.height/GRIDVAL), 1);
+
     /** Run the optimized sobel filter using the CPU **/
     c = std::chrono::system_clock::now();
-    sobel_gpu_shared<<<numBlocks, threadsPerBlock>>>(gpu_src, gpu_result, origImg.width, origImg.height);
-    cudaError_t cudaerror = cudaDeviceSynchronize(); // waits for completion, returns error code
-    if ( cudaerror != cudaSuccess ) fprintf( stderr, "Cuda failed to synchronize: %s\n", cudaGetErrorName( cudaerror ) ); // if error, output error
+    sobel_gpu_shared<<<dimGrid, dimBlock>>>(gpu_src, gpu_result, origImg.width, origImg.height);
+    cudaError_t cudaerror2 = cudaDeviceSynchronize(); // waits for completion, returns error code
+    if ( cudaerror2 != cudaSuccess ) fprintf( stderr, "Cuda failed to synchronize: %s\n", cudaGetErrorName( cudaerror ) ); // if error, output error
     std::chrono::duration<double> time_gpu_shared = std::chrono::system_clock::now() - c;
-    cudaMemcpy(gpuImg.pixels, gpu_result, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
+    cudaMemcpy(shgImg.pixels, gpu_result, (origImg.width*origImg.height), cudaMemcpyDeviceToHost);
 
 
     /** Output runtimes of each method of sobel filtering **/
     printf("\nProcessing %s: %d rows x %d columns\n", argv[1], origImg.height, origImg.width);
-    printf("CPU execution time    = %*.1f msec\n", 5, 1000*time_cpu.count());
-    printf("OpenMP execution time = %*.1f msec\n", 5, 1000*time_omp.count());
-    printf("CUDA execution time   = %*.1f msec\n", 5, 1000*time_gpu.count());
-    printf("Optimized CUDA execution time   = %*.1f msec\n", 5, 1000*time_gpu_shared.count());
+    printf("CPU execution time    = %*.5f msec\n", 5, 1000*time_cpu.count());
+    printf("OpenMP execution time = %*.5f msec\n", 5, 1000*time_omp.count());
+    printf("CUDA execution time   = %*.5f msec\n", 5, 1000*time_gpu.count());
+    printf("Optimized CUDA execution time   = %*.5f msec\n", 5, 1000*time_gpu_shared.count());
     printf("\nCPU->OMP speedup:%*.1f X", 12, (1000*time_cpu.count())/(1000*time_omp.count()));
     printf("\nOMP->GPU speedup:%*.1f X", 12, (1000*time_omp.count())/(1000*time_gpu.count()));
     printf("\nCPU->GPU speedup:%*.1f X", 12, (1000*time_cpu.count())/(1000*time_gpu.count()));
@@ -208,11 +234,15 @@ int main(int argc, char*argv[]) {
 
     /** Output the images of each sobel filter with an appropriate string appended to the original image name **/
     writeImage(argv[1], "gpu", gpuImg);
-    writeImage(argv[1], "cpu", cpuImg);
-    writeImage(argv[1], "omp", ompImg);
+    writeImage(argv[1], "shg", shgImg);
+    // writeImage(argv[1], "cpu", cpuImg);
+    // writeImage(argv[1], "omp", ompImg);
 
     /** Free any memory leftover.. gpuImig, cpuImg, and ompImg get their pixels free'd while writing **/
     cudaFree(gpu_orig); cudaFree(gpu_sobel);
+    cudaFree(gpu_src);    cudaFree(gpu_result);
+    
+
     return 0;
 }
 
