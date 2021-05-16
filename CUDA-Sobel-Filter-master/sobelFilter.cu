@@ -69,7 +69,7 @@ __global__ void sobel_gpu_shared(const byte* orig, byte* cpu, const unsigned int
     if (threadIdx.y == 0) {
         shared_mem[threadIdx.y][threadIdx.x+1] = ((y < height) && (x < width) && (y > 0)) ? orig[(y - 1) * width + (x)] : 0;
         if (threadIdx.x == (GRIDVAL - 1)) {
-            shared_mem[threadIdx.y + 1][threadIdx.x + 2] = ((y < height) && (x < width-1)) ? orig[(y) * width + (x+1)] : 0;
+            shared_mem[threadIdx.y][threadIdx.x + 2] = ((y < height) && (x < width-1) && (y > 0)) ? orig[(y - 1) * width + (x+1)] : 0;
         }
     }
     if (threadIdx.x == (GRIDVAL - 1)) {
